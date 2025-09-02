@@ -1,0 +1,9 @@
+The shark has to turn slowly and speed up when really close to the school he just attacks the mass then maybe singles out a fish.
+
+The fish love to spiral by turning towards a center mass.
+
+It should be only the closest fish panic because of the shark and the neighbor fish just react to the others impeding there space 
+
+This will be built using GO compiling with Tiny-GO to make it a .wasm 
+
+Hopefully can port to WilI, also on website
