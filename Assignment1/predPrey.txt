@@ -14,6 +14,6 @@ use vectors for map
 
 possibly objects like reef on the edges
 
-The fish motion in this project is based on established models of collective behavior. In particular, I borrowed from Aoki (1982) and Reynolds’ ‘Boids’ model (1987), where forces of attraction, repulsion, and alignment are treated as potential-like influences. My ‘comfort potential’ framing is a reinterpretation of those same forces, inspired by more recent SDE approaches (Hartono et al. 2022) and the predator–prey dynamics discussed by Couzin et al. (2005)
-
 Separation, Allignment, Cohesion all taken from the Complexity_International paper, I added the tangential spiral so because I though it would look cool. The shark moves using the Ornstein–Uhlenbeck process it sounded really cool and also got the affect I wanted of a meandering but also slight attraction to the school.
+
+
