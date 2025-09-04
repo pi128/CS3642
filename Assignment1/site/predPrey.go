@@ -6,7 +6,8 @@ import (
 	"time"
 )
 
-// ===== math types =====
+/* ================= math + types ================= */
+
 type Vec2 struct{ X, Y float64 }
 type Fish struct {
 	Pos, Vel Vec2
@@ -19,6 +20,7 @@ func (a Vec2) Add(b Vec2) Vec2    { return Vec2{a.X + b.X, a.Y + b.Y} }
 func (a Vec2) Sub(b Vec2) Vec2    { return Vec2{a.X - b.X, a.Y - b.Y} }
 func (a Vec2) Mul(s float64) Vec2 { return Vec2{a.X * s, a.Y * s} }
 func (a Vec2) Len2() float64      { return a.X*a.X + a.Y*a.Y }
+func (a Vec2) Len() float64       { return math.Sqrt(a.Len2()) }
 func (a Vec2) Normalize() Vec2 {
 	l2 := a.Len2()
 	if l2 == 0 {
@@ -48,8 +50,10 @@ func Wrap(p Vec2, w, h float64) Vec2 {
 	return Vec2{x, y}
 }
 
-// ===== sim constants =====
+/* ================= sim constants ================= */
+
 const (
+	// world = canvas
 	W  = 480.0
 	H  = 320.0
 	dt = 1.0 / 60.0 // seconds per tick
@@ -59,49 +63,58 @@ const (
 	MaxNeighbors = 14
 
 	// radii (px)
-	Rsep    = 14.0
-	Rn      = 70.0
-	Rthreat = 110.0
+	Rsep    = 12.0
+	Rn      = 80.0
+	Rthreat = 80.0 // smaller radius => less constant panic
 
-	// weights (dimensionless steering gains)
-	wSep   = 1.2
-	wAlign = 1.6  // ↑ stronger alignment
-	wCoh   = 1.0  // ↑ stronger cohesion
-	wTan   = 0.20 // ↓ swirl so flock holds together
-	drag   = 0.04 // a touch more drag
+	// schooling weights
+	wSep   = 0.8
+	wAlign = 2.2
+	wCoh   = 1.4
+	wTan   = 0.35
+	drag   = 0.05
 
-	// flee & speeds (px/s)
-	fleeMax   = 240.0
-	fleeExp   = 1.4
-	vFishMax  = 170.0
-	vSharkMax = 160.0
+	// baseline spiral + soft wall
+	wSpin = 0.22
+	wWall = 0.9
+
+	// flee (px/s)
+	fleeMax = 90.0
+	fleeExp = 2.0
+
+	// speeds (px/s)
+	vFishMax  = 150.0
+	vFishMin  = 45.0 // <- speed floor so they never stall
+	vBoost    = 18.0 // <- mild re-energizer if too slow
+	vSharkMax = 110.0
 
 	SwirlClockwise = true
 
-	// UI IDs
+	// IDs
 	PanelID     = 0
 	SharkCID    = 10
 	BaseFishCID = 1000
 	BaseTailCID = 5000
 )
 
-// ===== forces =====
+/* ================= forces ================= */
+
 func SeparationForce(i int, flock []Fish, rsep float64, maxN int) Vec2 {
 	const eps = 1e-6
-	rsep2 := rsep * rsep
+	r2 := rsep * rsep
 	self := flock[i].Pos
 	force := Vec2{}
 	seen := 0
-	for j := 0; j < len(flock); j++ {
+	for j := range flock {
 		if j == i {
 			continue
 		}
 		d := self.Sub(flock[j].Pos)
-		dist2 := d.Len2()
-		if dist2 >= rsep2 || dist2 == 0 {
+		d2 := d.Len2()
+		if d2 >= r2 || d2 == 0 {
 			continue
 		}
-		dist := math.Sqrt(dist2)
+		dist := math.Sqrt(d2)
 		strength := (rsep - dist) / (rsep + eps)
 		force = force.Add(d.Normalize().Mul(strength))
 		seen++
@@ -113,16 +126,16 @@ func SeparationForce(i int, flock []Fish, rsep float64, maxN int) Vec2 {
 }
 
 func AlignmentForce(i int, flock []Fish, rn float64, maxN int) Vec2 {
-	rn2 := rn * rn
+	r2 := rn * rn
 	self := flock[i]
-	sumHeading := Vec2{}
+	sum := Vec2{}
 	count := 0
-	for j := 0; j < len(flock); j++ {
+	for j := range flock {
 		if j == i {
 			continue
 		}
-		if self.Pos.Sub(flock[j].Pos).Len2() <= rn2 {
-			sumHeading = sumHeading.Add(flock[j].Vel)
+		if self.Pos.Sub(flock[j].Pos).Len2() <= r2 {
+			sum = sum.Add(flock[j].Vel)
 			count++
 			if maxN > 0 && count >= maxN {
 				break
@@ -132,22 +145,22 @@ func AlignmentForce(i int, flock []Fish, rn float64, maxN int) Vec2 {
 	if count == 0 {
 		return Vec2{}
 	}
-	avg := sumHeading.SafeNormalize()
+	avg := sum.SafeNormalize()
 	cur := self.Vel.SafeNormalize()
 	return avg.Sub(cur)
 }
 
 func CohesionForce(i int, flock []Fish, rn float64, maxN int) Vec2 {
-	rn2 := rn * rn
+	r2 := rn * rn
 	self := flock[i]
-	sumPos := Vec2{}
+	sum := Vec2{}
 	count := 0
-	for j := 0; j < len(flock); j++ {
+	for j := range flock {
 		if j == i {
 			continue
 		}
-		if self.Pos.Sub(flock[j].Pos).Len2() <= rn2 {
-			sumPos = sumPos.Add(flock[j].Pos)
+		if self.Pos.Sub(flock[j].Pos).Len2() <= r2 {
+			sum = sum.Add(flock[j].Pos)
 			count++
 			if maxN > 0 && count >= maxN {
 				break
@@ -157,33 +170,22 @@ func CohesionForce(i int, flock []Fish, rn float64, maxN int) Vec2 {
 	if count == 0 {
 		return Vec2{}
 	}
-	centroid := sumPos.Mul(1.0 / float64(count))
+	centroid := sum.Mul(1.0 / float64(count))
 	desired := centroid.Sub(self.Pos).SafeNormalize()
-	cur := self.Vel.SafeNormalize()
-	return desired.Sub(cur)
-}
-
-func CohesionForceBiased(i int, flock []Fish, rn float64, maxN int, sharkPos Vec2, kBias float64) Vec2 {
-	base := CohesionForce(i, flock, rn, maxN)
-	if (base.X == 0 && base.Y == 0) || kBias == 0 {
-		return base
-	}
-	away := flock[i].Pos.Sub(sharkPos).SafeNormalize()
-	desired := base.Add(away.Mul(kBias)).SafeNormalize()
-	return desired.Sub(flock[i].Vel.SafeNormalize())
+	return desired.Sub(self.Vel.SafeNormalize())
 }
 
 func TangentialSwirlForce(i int, flock []Fish, rn float64, maxN int, clockwise bool) Vec2 {
-	rn2 := rn * rn
+	r2 := rn * rn
 	self := flock[i]
-	sumPos := Vec2{}
+	sum := Vec2{}
 	count := 0
-	for j := 0; j < len(flock); j++ {
+	for j := range flock {
 		if j == i {
 			continue
 		}
-		if self.Pos.Sub(flock[j].Pos).Len2() <= rn2 {
-			sumPos = sumPos.Add(flock[j].Pos)
+		if self.Pos.Sub(flock[j].Pos).Len2() <= r2 {
+			sum = sum.Add(flock[j].Pos)
 			count++
 			if maxN > 0 && count >= maxN {
 				break
@@ -193,36 +195,47 @@ func TangentialSwirlForce(i int, flock []Fish, rn float64, maxN int, clockwise b
 	if count == 0 {
 		return Vec2{}
 	}
-	centroid := sumPos.Mul(1.0 / float64(count))
-	cohDir := centroid.Sub(self.Pos).SafeNormalize()
-	if cohDir.X == 0 && cohDir.Y == 0 {
+	centroid := sum.Mul(1.0 / float64(count))
+	toC := centroid.Sub(self.Pos).SafeNormalize()
+	if toC.X == 0 && toC.Y == 0 {
 		return Vec2{}
 	}
 	var tangent Vec2
 	if clockwise {
-		tangent = cohDir.PerpCW()
+		tangent = toC.PerpCW()
 	} else {
-		tangent = cohDir.PerpCCW()
+		tangent = toC.PerpCCW()
 	}
-	tangent = tangent.SafeNormalize()
-	return tangent.Sub(self.Vel.SafeNormalize())
+	return tangent.SafeNormalize().Sub(self.Vel.SafeNormalize())
 }
 
-func TangentialSwirlForceWithThreat(i int, flock []Fish, rn float64, maxN int, clockwise bool, sharkPos Vec2, rThreat, minFactor float64) Vec2 {
-	base := TangentialSwirlForce(i, flock, rn, maxN, clockwise)
-	if (base.X == 0 && base.Y == 0) || rThreat <= 0 {
-		return base
+// global swirl toward scene center (baseline spin)
+func GlobalSwirlForce(pos, center Vec2, clockwise bool) Vec2 {
+	toC := center.Sub(pos).SafeNormalize()
+	if toC.X == 0 && toC.Y == 0 {
+		return Vec2{}
 	}
-	d2 := flock[i].Pos.Sub(sharkPos).Len2()
-	r2 := rThreat * rThreat
-	var t float64
-	if d2 >= r2 {
-		t = 1.0
-	} else {
-		t = math.Sqrt(d2) / rThreat
+	if clockwise {
+		return toC.PerpCW()
 	}
-	scale := minFactor + (1.0-minFactor)*clamp01(t)
-	return base.Mul(scale)
+	return toC.PerpCCW()
+}
+
+// soft wall to keep fish inside (within margin m)
+func BorderForce(pos Vec2, w, h, m float64) Vec2 {
+	fx, fy := 0.0, 0.0
+	if pos.X < m {
+		fx += (m - pos.X) / m
+	} else if pos.X > w-m {
+		fx -= (pos.X - (w - m)) / m
+	}
+	if pos.Y < m {
+		fy += (m - pos.Y) / m
+	} else if pos.Y > h-m {
+		fy -= (pos.Y - (h - m)) / m
+	}
+	// scale to velocity-like magnitude
+	return Vec2{fx, fy}.Mul(140.0)
 }
 
 func FleeForce(i int, flock []Fish, sharkPos Vec2, rThreat, maxStrength, exponent float64) Vec2 {
@@ -254,7 +267,8 @@ func clamp01(x float64) float64 {
 	return x
 }
 
-// helpers
+/* ================ shark helpers ================ */
+
 func SchoolCenter(flock []Fish) Vec2 {
 	if len(flock) == 0 {
 		return Vec2{}
@@ -275,20 +289,27 @@ func UpdateSharkOU(s *Shark, dt, kappa, sigma, beta, gamma, sMax float64, sceneC
 	s.Pos = s.Pos.Add(s.Vel.Mul(dt))
 }
 
-// ===== main loop =====
+/* ===================== main ===================== */
+
 func main() {
 	rand.Seed(time.Now().UnixNano())
 
-	// fish
+	// init fish
 	fish := make([]Fish, NumFish)
+	center0 := Vec2{W * 0.5, H * 0.5}
 	for i := range fish {
 		fish[i].Pos = Vec2{rand.Float64() * W, rand.Float64() * H}
-		fish[i].Vel = Vec2{rand.Float64()*2 - 1, rand.Float64()*2 - 1}.Normalize().Mul(140.0)
+		// give a slight initial tangential bias so a spiral forms quickly
+		toC := center0.Sub(fish[i].Pos).SafeNormalize()
+		tan := toC.PerpCW()
+		dir := Vec2{rand.Float64()*2 - 1, rand.Float64()*2 - 1}.Normalize()
+		fish[i].Vel = dir.Mul(40).Add(tan.Mul(90)).Limit(120.0)
 		for j := 0; j < TailLength; j++ {
 			fish[i].Tail[j] = fish[i].Pos
 		}
 	}
-	// shark
+
+	// shark patrol
 	shark := Shark{Pos: Vec2{W * 0.5, H * 0.5}}
 
 	// UI setup (PNG files live next to index.html)
@@ -306,19 +327,43 @@ func main() {
 	for {
 		// --- SIM ---
 		center := SchoolCenter(fish)
-		// kappa=0.7 (mean reversion), sigma=70 px/sqrt(s), beta=0.6 (to scene center), gamma=0.18 (to school)
-		UpdateSharkOU(&shark, dt, 0.7, 70.0, 0.6, 0.18, vSharkMax, Vec2{W * 0.5, H * 0.5}, center)
+
+		// calmer shark patrol (kappa↑, sigma↓, gentle pulls)
+		UpdateSharkOU(&shark, dt, 0.9, 25.0, 0.22, 0.08, vSharkMax, Vec2{W * 0.5, H * 0.5}, center)
 		shark.Pos = Wrap(shark.Pos, W, H)
 
 		for i := range fish {
+			// schooling first
 			sep := SeparationForce(i, fish, Rsep, MaxNeighbors).Mul(wSep)
 			aln := AlignmentForce(i, fish, Rn, MaxNeighbors).Mul(wAlign)
-			coh := CohesionForceBiased(i, fish, Rn, MaxNeighbors, shark.Pos, 0.15).Mul(wCoh)
-			tan := TangentialSwirlForceWithThreat(i, fish, Rn, MaxNeighbors, SwirlClockwise, shark.Pos, Rthreat, 0.6).Mul(wTan)
+			coh := CohesionForce(i, fish, Rn, MaxNeighbors).Mul(wCoh)
+			tan := TangentialSwirlForce(i, fish, Rn, MaxNeighbors, SwirlClockwise).Mul(wTan)
+
+			// baseline swirl + soft wall
+			spin := GlobalSwirlForce(fish[i].Pos, center, SwirlClockwise).Mul(wSpin)
+			wall := BorderForce(fish[i].Pos, W, H, 24.0).Mul(wWall)
+
+			// gentle flee (close + curved)
 			flee := FleeForce(i, fish, shark.Pos, Rthreat, fleeMax, fleeExp)
 
-			acc := sep.Add(aln).Add(coh).Add(tan).Add(flee).Sub(fish[i].Vel.Mul(drag))
+			acc := sep.Add(aln).Add(coh).Add(tan).Add(spin).Add(wall).Add(flee).Sub(fish[i].Vel.Mul(drag))
+
+			// integrate
 			fish[i].Vel = fish[i].Vel.Add(acc.Mul(dt)).Limit(vFishMax)
+
+			// speed floor: nudge forward if too slow so they never stall
+			speed := fish[i].Vel.Len()
+			if speed < vFishMin {
+				dir := fish[i].Vel
+				if dir.Len2() == 0 {
+					// random tiny nudge if exactly zero
+					dir = Vec2{rand.Float64()*2 - 1, rand.Float64()*2 - 1}.Normalize()
+				} else {
+					dir = dir.SafeNormalize()
+				}
+				fish[i].Vel = dir.Mul(vFishMin + vBoost*rand.Float64()*0.5)
+			}
+
 			fish[i].Pos = Wrap(fish[i].Pos.Add(fish[i].Vel.Mul(dt)), W, H)
 
 			// tail ring push
@@ -328,11 +373,9 @@ func main() {
 
 		// --- RENDER (batched XY) ---
 		SetControlXY(PanelID, SharkCID, int(shark.Pos.X), int(shark.Pos.Y))
-
 		for i := 0; i < NumFish; i++ {
 			SetControlXY(PanelID, BaseFishCID+i, int(fish[i].Pos.X), int(fish[i].Pos.Y))
-
-			// update tail markers every other frame to cut work in half
+			// update tail markers every other frame
 			if frame%2 == 0 {
 				for j := 0; j < TailLength; j++ {
 					idx := (fish[i].TailHead - j + TailLength) % TailLength
