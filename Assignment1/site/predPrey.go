@@ -3,25 +3,27 @@ package main
 import (
 	"math"
 	"math/rand"
+	"strconv"
+	"syscall/js"
 	"time"
 )
 
-/* ================= math + types ================= */
+/* ========== tiny vec ========== */
 
 type Vec2 struct{ X, Y float64 }
-type Fish struct {
-	Pos, Vel Vec2
-	Tail     [TailLength]Vec2
-	TailHead int
-}
-type Shark struct{ Pos, Vel Vec2 }
 
 func (a Vec2) Add(b Vec2) Vec2    { return Vec2{a.X + b.X, a.Y + b.Y} }
 func (a Vec2) Sub(b Vec2) Vec2    { return Vec2{a.X - b.X, a.Y - b.Y} }
 func (a Vec2) Mul(s float64) Vec2 { return Vec2{a.X * s, a.Y * s} }
 func (a Vec2) Len2() float64      { return a.X*a.X + a.Y*a.Y }
-func (a Vec2) Len() float64       { return math.Sqrt(a.Len2()) }
-func (a Vec2) Normalize() Vec2 {
+func (a Vec2) Len() float64 {
+	l2 := a.Len2()
+	if l2 == 0 {
+		return 0
+	}
+	return math.Sqrt(l2)
+}
+func (a Vec2) Norm() Vec2 {
 	l2 := a.Len2()
 	if l2 == 0 {
 		return Vec2{}
@@ -29,364 +31,620 @@ func (a Vec2) Normalize() Vec2 {
 	inv := 1 / math.Sqrt(l2)
 	return Vec2{a.X * inv, a.Y * inv}
 }
-func (a Vec2) SafeNormalize() Vec2 { return a.Normalize() }
-func (a Vec2) Limit(max float64) Vec2 {
-	if max <= 0 {
-		return Vec2{}
-	}
-	l2, m2 := a.Len2(), max*max
-	if l2 > m2 {
-		inv := max / math.Sqrt(l2)
-		return Vec2{a.X * inv, a.Y * inv}
-	}
-	return a
-}
-func (a Vec2) PerpCW() Vec2  { return Vec2{a.Y, -a.X} }
-func (a Vec2) PerpCCW() Vec2 { return Vec2{-a.Y, a.X} }
+func (a Vec2) Dot(b Vec2) float64 { return a.X*b.X + a.Y*b.Y }
 
-func Wrap(p Vec2, w, h float64) Vec2 {
-	x := math.Mod(p.X+w, w)
-	y := math.Mod(p.Y+h, h)
-	return Vec2{x, y}
-}
+/* ========== sim types ========== */
 
-/* ================= sim constants ================= */
+type Boid struct {
+	Pos, Vel Vec2
+	Tail     [TailLen]Vec2
+	Head     int
+	Dead     bool // stays in slice; sim/render skip when true
+}
+type Shark struct{ Pos, Vel Vec2 }
+
+/* ========== constants (base defaults) ========== */
 
 const (
-	// world = canvas
-	W  = 480.0
-	H  = 320.0
-	dt = 1.0 / 60.0 // seconds per tick
+	// world / timing
+	W, H = 480.0, 320.0
+	dt   = 1.0 / 60.0
 
-	NumFish      = 80
-	TailLength   = 10
-	MaxNeighbors = 14
+	// population & tails
+	N       = 48
+	TailLen = 6
 
-	// radii (px)
-	Rsep    = 12.0
-	Rn      = 80.0
-	Rthreat = 80.0 // smaller radius => less constant panic
+	// off-canvas sentinel (always positive)
+	Offscreen = 1_000_000
 
-	// schooling weights
-	wSep   = 0.8
-	wAlign = 2.2
-	wCoh   = 1.4
-	wTan   = 0.35
-	drag   = 0.05
+	// perception
+	RsepBase = 20.0
+	Rnei     = 110.0
+	FOVcos   = -0.5 // cos(120°)
 
-	// baseline spiral + soft wall
-	wSpin = 0.22
-	wWall = 0.9
+	// boids rule weights
+	WsepBase = 1.60
+	WaliBase = 1.75
+	WcohBase = 0.45
 
-	// flee (px/s)
-	fleeMax = 90.0
-	fleeExp = 2.0
+	// damping & tiny noise
+	Drag   = 0.045
+	Jitter = 0.7
 
-	// speeds (px/s)
-	vFishMax  = 150.0
-	vFishMin  = 45.0 // <- speed floor so they never stall
-	vBoost    = 18.0 // <- mild re-energizer if too slow
-	vSharkMax = 110.0
+	// speed & steering (smooth)
+	Vmax      = 118.0
+	Vmin      = 46.0
+	TargetSpd = 90.0
+	MaxForce  = 140.0
+	MaxTurn   = 3.0
 
-	SwirlClockwise = true
+	// predictive wall avoidance (corner-safe)
+	WallTau      = 0.50
+	WallMargin   = 38.0
+	WallFriction = 0.65
+	WallBlendPow = 2.0
 
-	// IDs
+	// gentle “home” field (prefer middle)
+	HomePushMax = 100.0
+	HomeExp     = 1.9
+	CenterPull  = 0.08
+
+	// shark (PD pursuit ellipse, re-centers toward flock)
+	SharkPeriod         = 18.0
+	SharkRXBase         = 0.28 // * W via slider
+	SharkRYBase         = 0.20 // * H via slider (keeps aspect)
+	SharkTargetV        = 150.0
+	SharkMaxTurn        = 1.8
+	SharkMaxForce       = 110.0
+	SharkKp             = 1.8
+	SharkKd             = 0.9
+	SharkCenterBiasBase = 0.65
+	SharkCenterTauSec   = 1.2
+	SharkSeekGroupBase  = 0.35
+
+	// flee
+	ThreatR  = 80.0
+	FleeGain = 120.0
+	FleeEase = 2.2
+
+	// evil mode (intercept + eat)
+	EatRadius      = 10.0
+	EatCooldownSec = 0.35
+	LeadFactor     = 0.85
+	SweepBias      = 0.35
+	ConeCos        = 0.5
+
+	// UI IDs / assets (host-provided render glue)
 	PanelID     = 0
-	SharkCID    = 10
-	BaseFishCID = 1000
+	BaseBoidCID = 1000
 	BaseTailCID = 5000
+	SpritePath  = "fish.png"
+	TailPath    = "tail.png"
+	SharkCID    = 10
+	SharkSprite = "shark.png"
 )
 
-/* ================= forces ================= */
+/* ========== helpers ========== */
 
-func SeparationForce(i int, flock []Fish, rsep float64, maxN int) Vec2 {
-	const eps = 1e-6
-	r2 := rsep * rsep
-	self := flock[i].Pos
-	force := Vec2{}
-	seen := 0
-	for j := range flock {
-		if j == i {
-			continue
-		}
-		d := self.Sub(flock[j].Pos)
-		d2 := d.Len2()
-		if d2 >= r2 || d2 == 0 {
-			continue
-		}
-		dist := math.Sqrt(d2)
-		strength := (rsep - dist) / (rsep + eps)
-		force = force.Add(d.Normalize().Mul(strength))
-		seen++
-		if maxN > 0 && seen >= maxN {
-			break
-		}
+func clampPos(p Vec2) Vec2 {
+	if p.X < 1 {
+		p.X = 1
 	}
-	return force
+	if p.Y < 1 {
+		p.Y = 1
+	}
+	if p.X > W-1 {
+		p.X = W - 1
+	}
+	if p.Y > H-1 {
+		p.Y = H - 1
+	}
+	return p
+}
+func ii(x float64) int { return int(math.Round(x)) }
+func rotate(v Vec2, ang float64) Vec2 {
+	c, s := math.Cos(ang), math.Sin(ang)
+	return Vec2{v.X*c - v.Y*s, v.X*s + v.Y*c}
 }
 
-func AlignmentForce(i int, flock []Fish, rn float64, maxN int) Vec2 {
-	r2 := rn * rn
-	self := flock[i]
+/* ========== slider & checkbox readers ========== */
+
+func getSlider(id string, def float64) float64 {
+	el := js.Global().Get("document").Call("getElementById", id)
+	if !el.Truthy() {
+		return def
+	}
+	f, err := strconv.ParseFloat(el.Get("value").String(), 64)
+	if err != nil {
+		return def
+	}
+	return f
+}
+func getCheckbox(id string) bool {
+	el := js.Global().Get("document").Call("getElementById", id)
+	if !el.Truthy() {
+		return false
+	}
+	return el.Get("checked").Bool()
+}
+
+/* ========== falloffs & FOV ========== */
+
+func quadKernel(d, R float64) float64 {
+	if d <= 0 {
+		return 1
+	}
+	if d >= R {
+		return 0
+	}
+	x := d / R
+	y := 1 - x*x
+	return y * y
+}
+func inFOV(selfPos, selfVel, otherPos Vec2) bool {
+	dir := selfVel.Norm()
+	if dir.Len2() == 0 {
+		return true
+	}
+	toN := otherPos.Sub(selfPos).Norm()
+	return dir.Dot(toN) >= FOVcos
+}
+
+/* ========== core boids (skip Dead; Rsep passed in) ========== */
+
+func ruleSeparationR(i int, b []Boid, Rsep float64) Vec2 {
+	if b[i].Dead {
+		return Vec2{}
+	}
+	self := b[i].Pos
+	out := Vec2{}
+	for j := range b {
+		if j == i || b[j].Dead {
+			continue
+		}
+		dv := self.Sub(b[j].Pos)
+		d := dv.Len()
+		if d == 0 || d > Rsep {
+			continue
+		}
+		w := (1 - d/Rsep)
+		out = out.Add(dv.Norm().Mul(w * w * (Rsep / (d + 1e-6))))
+	}
+	return out
+}
+func ruleAlignment(i int, b []Boid) Vec2 {
+	if b[i].Dead {
+		return Vec2{}
+	}
+	self := b[i]
 	sum := Vec2{}
-	count := 0
-	for j := range flock {
-		if j == i {
+	ws := 0.0
+	for j := range b {
+		if j == i || b[j].Dead {
 			continue
 		}
-		if self.Pos.Sub(flock[j].Pos).Len2() <= r2 {
-			sum = sum.Add(flock[j].Vel)
-			count++
-			if maxN > 0 && count >= maxN {
-				break
-			}
+		if !inFOV(self.Pos, self.Vel, b[j].Pos) {
+			continue
 		}
+		d := self.Pos.Sub(b[j].Pos).Len()
+		if d > Rnei {
+			continue
+		}
+		w := quadKernel(d, Rnei)
+		sum = sum.Add(b[j].Vel.Mul(w))
+		ws += w
 	}
-	if count == 0 {
+	if ws == 0 {
 		return Vec2{}
 	}
-	avg := sum.SafeNormalize()
-	cur := self.Vel.SafeNormalize()
-	return avg.Sub(cur)
+	return sum.Mul(1 / ws).Norm()
 }
-
-func CohesionForce(i int, flock []Fish, rn float64, maxN int) Vec2 {
-	r2 := rn * rn
-	self := flock[i]
+func ruleCohesion(i int, b []Boid) Vec2 {
+	if b[i].Dead {
+		return Vec2{}
+	}
+	self := b[i]
 	sum := Vec2{}
-	count := 0
-	for j := range flock {
-		if j == i {
+	ws := 0.0
+	for j := range b {
+		if j == i || b[j].Dead {
 			continue
 		}
-		if self.Pos.Sub(flock[j].Pos).Len2() <= r2 {
-			sum = sum.Add(flock[j].Pos)
-			count++
-			if maxN > 0 && count >= maxN {
-				break
-			}
-		}
-	}
-	if count == 0 {
-		return Vec2{}
-	}
-	centroid := sum.Mul(1.0 / float64(count))
-	desired := centroid.Sub(self.Pos).SafeNormalize()
-	return desired.Sub(self.Vel.SafeNormalize())
-}
-
-func TangentialSwirlForce(i int, flock []Fish, rn float64, maxN int, clockwise bool) Vec2 {
-	r2 := rn * rn
-	self := flock[i]
-	sum := Vec2{}
-	count := 0
-	for j := range flock {
-		if j == i {
+		if !inFOV(self.Pos, self.Vel, b[j].Pos) {
 			continue
 		}
-		if self.Pos.Sub(flock[j].Pos).Len2() <= r2 {
-			sum = sum.Add(flock[j].Pos)
-			count++
-			if maxN > 0 && count >= maxN {
-				break
-			}
+		d := self.Pos.Sub(b[j].Pos).Len()
+		if d > Rnei {
+			continue
 		}
+		w := quadKernel(d, Rnei)
+		sum = sum.Add(b[j].Pos.Mul(w))
+		ws += w
 	}
-	if count == 0 {
+	if ws == 0 {
 		return Vec2{}
 	}
-	centroid := sum.Mul(1.0 / float64(count))
-	toC := centroid.Sub(self.Pos).SafeNormalize()
-	if toC.X == 0 && toC.Y == 0 {
-		return Vec2{}
-	}
-	var tangent Vec2
-	if clockwise {
-		tangent = toC.PerpCW()
-	} else {
-		tangent = toC.PerpCCW()
-	}
-	return tangent.SafeNormalize().Sub(self.Vel.SafeNormalize())
+	center := sum.Mul(1 / ws)
+	return center.Sub(self.Pos).Norm()
 }
 
-// global swirl toward scene center (baseline spin)
-func GlobalSwirlForce(pos, center Vec2, clockwise bool) Vec2 {
-	toC := center.Sub(pos).SafeNormalize()
-	if toC.X == 0 && toC.Y == 0 {
-		return Vec2{}
-	}
-	if clockwise {
-		return toC.PerpCW()
-	}
-	return toC.PerpCCW()
-}
+/* ========== home field & walls ========== */
 
-// soft wall to keep fish inside (within margin m)
-func BorderForce(pos Vec2, w, h, m float64) Vec2 {
-	fx, fy := 0.0, 0.0
-	if pos.X < m {
-		fx += (m - pos.X) / m
-	} else if pos.X > w-m {
-		fx -= (pos.X - (w - m)) / m
-	}
-	if pos.Y < m {
-		fy += (m - pos.Y) / m
-	} else if pos.Y > h-m {
-		fy -= (pos.Y - (h - m)) / m
-	}
-	// scale to velocity-like magnitude
-	return Vec2{fx, fy}.Mul(140.0)
-}
-
-func FleeForce(i int, flock []Fish, sharkPos Vec2, rThreat, maxStrength, exponent float64) Vec2 {
-	if rThreat <= 0 {
+func homeVel(pos Vec2) Vec2 {
+	c := Vec2{W * 0.5, H * 0.5}
+	d := c.Sub(pos)
+	r := d.Len()
+	if r == 0 {
 		return Vec2{}
 	}
-	d := flock[i].Pos.Sub(sharkPos)
-	d2 := d.Len2()
-	r2 := rThreat * rThreat
-	if d2 == 0 || d2 >= r2 {
-		return Vec2{}
+	rMax := 0.5 * math.Min(W, H)
+	if rMax < 1 {
+		rMax = 1
 	}
-	dist := math.Sqrt(d2)
-	t := 1.0 - dist/rThreat
+	t := r / rMax
 	if t < 0 {
 		t = 0
 	}
-	strength := maxStrength * math.Pow(t, exponent)
-	return d.SafeNormalize().Mul(strength)
-}
-
-func clamp01(x float64) float64 {
-	if x < 0 {
-		return 0
+	if t > 1 {
+		t = 1
 	}
-	if x > 1 {
-		return 1
-	}
-	return x
+	k := HomePushMax * math.Pow(t, HomeExp)
+	return d.Mul(k / r)
 }
-
-/* ================ shark helpers ================ */
-
-func SchoolCenter(flock []Fish) Vec2 {
-	if len(flock) == 0 {
+func blendedWallNormal(p Vec2) Vec2 {
+	dL := p.X
+	dR := W - p.X
+	dT := p.Y
+	dB := H - p.Y
+	wL := 1.0 / math.Pow(dL+1.0, WallBlendPow)
+	wR := 1.0 / math.Pow(dR+1.0, WallBlendPow)
+	wT := 1.0 / math.Pow(dT+1.0, WallBlendPow)
+	wB := 1.0 / math.Pow(dB+1.0, WallBlendPow)
+	n := Vec2{1, 0}.Mul(wL).Add(Vec2{-1, 0}.Mul(wR)).Add(Vec2{0, 1}.Mul(wT)).Add(Vec2{0, -1}.Mul(wB))
+	return n.Norm()
+}
+func confineDelta(pos, vel Vec2) Vec2 {
+	look := pos.Add(vel.Mul(WallTau))
+	dx := math.Min(look.X, W-look.X)
+	dy := math.Min(look.Y, H-look.Y)
+	d := math.Min(dx, dy)
+	if d >= WallMargin {
 		return Vec2{}
 	}
-	sum := Vec2{}
-	for i := range flock {
-		sum = sum.Add(flock[i].Pos)
+	n := blendedWallNormal(look)
+	if n.Len2() == 0 {
+		return Vec2{}
 	}
-	return sum.Mul(1.0 / float64(len(flock)))
+	vn := vel.Dot(n) // inward +, outward -
+	if vn >= 0 {
+		return Vec2{}
+	}
+	s := 1 - d/WallMargin
+	if s < 0 {
+		s = 0
+	}
+	if s > 1 {
+		s = 1
+	}
+	outPart := n.Mul(vn)
+	vt := vel.Sub(outPart)
+	alongDamp := vt.Mul(WallFriction * s)
+	target := vel.Sub(outPart.Mul(1 + 0.7*s)).Sub(alongDamp)
+	return target.Sub(vel)
 }
 
-func UpdateSharkOU(s *Shark, dt, kappa, sigma, beta, gamma, sMax float64, sceneCenter, schoolCenter Vec2) {
-	reversion := s.Vel.Mul(-kappa * dt)
-	noise := Vec2{rand.NormFloat64(), rand.NormFloat64()}.Mul(sigma * math.Sqrt(dt))
-	centerPull := sceneCenter.Sub(s.Pos).Mul(beta * dt)
-	schoolPull := schoolCenter.Sub(s.Pos).Mul(gamma * dt)
-	s.Vel = s.Vel.Add(reversion).Add(noise).Add(centerPull).Add(schoolPull).Limit(sMax)
-	s.Pos = s.Pos.Add(s.Vel.Mul(dt))
+/* ========== steering (turn-rate limited) ========== */
+
+func steerTowards(curVel, desired Vec2, maxTurn, maxForce, targetSpd float64) Vec2 {
+	if desired.Len2() == 0 {
+		return curVel
+	}
+	wantDir := desired.Norm()
+	curSpd := curVel.Len()
+	if curSpd == 0 {
+		curSpd = targetSpd
+	}
+	wantVel := wantDir.Mul(targetSpd)
+
+	curDir := curVel.Norm()
+	dot := curDir.Dot(wantDir)
+	if dot > 1 {
+		dot = 1
+	}
+	if dot < -1 {
+		dot = -1
+	}
+	ang := math.Acos(dot)
+	maxStep := maxTurn * dt
+	sign := curDir.X*wantDir.Y - curDir.Y*wantDir.X
+	if sign < 0 {
+		ang = -ang
+	}
+	if ang > maxStep {
+		ang = maxStep
+	} else if ang < -maxStep {
+		ang = -maxStep
+	}
+
+	newDir := rotate(curDir, ang)
+	newVel := newDir.Mul(curSpd)
+
+	steer := wantVel.Sub(newVel)
+	maxKick := maxForce * dt
+	if s := steer.Len(); s > maxKick {
+		steer = steer.Mul(maxKick / s)
+	}
+	return newVel.Add(steer)
 }
 
-/* ===================== main ===================== */
+/* ========== shark helpers, flee, evil mode ========== */
+
+func sharkTargetPosAt(t float64, C Vec2, rx, ry float64) Vec2 {
+	ω := 2 * math.Pi / SharkPeriod
+	return Vec2{C.X + rx*math.Cos(ω*t), C.Y + ry*math.Sin(ω*t)}
+}
+func sharkTargetVel(t float64, rx, ry float64) Vec2 {
+	ω := 2 * math.Pi / SharkPeriod
+	return Vec2{-rx * ω * math.Sin(ω*t), ry * ω * math.Cos(ω*t)}
+}
+func fleeVel(pos, shark Vec2) Vec2 {
+	dv := pos.Sub(shark)
+	d := dv.Len()
+	if d == 0 || d >= ThreatR {
+		return Vec2{}
+	}
+	t := 1 - d/ThreatR
+	g := FleeGain * math.Pow(t, FleeEase)
+	return dv.Mul(g / (d + 1e-6))
+}
+func pickTarget(shark Shark, boids []Boid) (int, bool) {
+	best := -1
+	bestScore := -1e9
+	dir := shark.Vel.Norm()
+	for i := range boids {
+		if boids[i].Dead {
+			continue
+		}
+		rel := boids[i].Pos.Sub(shark.Pos)
+		d := rel.Len()
+		if d == 0 {
+			continue
+		}
+		toN := rel.Mul(1 / d)
+		if dir.Dot(toN) < ConeCos {
+			continue
+		}
+		s := 0.7*(1.0/d) + 0.3*dir.Dot(toN)
+		if s > bestScore {
+			bestScore, best = s, i
+		}
+	}
+	return best, best >= 0
+}
+func evilPursuit(shark Shark, target Boid, targetSpeed float64) Vec2 {
+	rel := target.Pos.Sub(shark.Pos)
+	d := rel.Len()
+	if d == 0 {
+		return Vec2{}
+	}
+	tEst := d / (targetSpeed + 1e-6)
+	aim := target.Pos.Add(target.Vel.Mul(tEst * LeadFactor))
+	c := Vec2{W * 0.5, H * 0.5}
+	toC := c.Sub(aim)
+	r := toC.Len()
+	sweep := Vec2{}
+	if r > 0 {
+		n := toC.Mul(1 / r)
+		sweep = Vec2{-n.Y, n.X}.Mul(SweepBias * targetSpeed)
+	}
+	return aim.Add(sweep).Sub(shark.Pos)
+}
+
+/* ========== sprite helpers ========== */
+
+// pre-clear ALL sprites each frame → no ghosts ever
+func clearAllSprites() {
+	offX, offY := Offscreen, Offscreen
+	for i := 0; i < N; i++ {
+		SetControlXY(PanelID, BaseBoidCID+i, offX, offY)
+		for k := 0; k < TailLen; k++ {
+			SetControlXY(PanelID, BaseTailCID+i*TailLen+k, offX, offY)
+		}
+	}
+}
+
+func chompMark(shark *Shark, boids []Boid) int {
+	for i := range boids {
+		if boids[i].Dead {
+			continue
+		}
+		if shark.Pos.Sub(boids[i].Pos).Len() <= EatRadius {
+			boids[i].Dead = true
+			boids[i].Pos = Vec2{float64(Offscreen), float64(Offscreen)} // exile state
+			boids[i].Vel = Vec2{}
+			return 1
+		}
+	}
+	return 0
+}
+
+/* ========== main ========== */
 
 func main() {
 	rand.Seed(time.Now().UnixNano())
 
-	// init fish
-	fish := make([]Fish, NumFish)
-	center0 := Vec2{W * 0.5, H * 0.5}
-	for i := range fish {
-		fish[i].Pos = Vec2{rand.Float64() * W, rand.Float64() * H}
-		// give a slight initial tangential bias so a spiral forms quickly
-		toC := center0.Sub(fish[i].Pos).SafeNormalize()
-		tan := toC.PerpCW()
-		dir := Vec2{rand.Float64()*2 - 1, rand.Float64()*2 - 1}.Normalize()
-		fish[i].Vel = dir.Mul(40).Add(tan.Mul(90)).Limit(120.0)
-		for j := 0; j < TailLength; j++ {
-			fish[i].Tail[j] = fish[i].Pos
+	center := Vec2{W * 0.5, H * 0.5}
+	boids := make([]Boid, N)
+	for i := range boids {
+		p := center.Add(Vec2{rand.NormFloat64() * 22, rand.NormFloat64() * 16})
+		ang := rand.Float64() * 2 * math.Pi
+		v := Vec2{math.Cos(ang), math.Sin(ang)}.Mul(80 + 20*rand.Float64())
+		boids[i] = Boid{Pos: p, Vel: v, Dead: false}
+		for k := 0; k < TailLen; k++ {
+			boids[i].Tail[k] = p
 		}
 	}
 
-	// shark patrol
-	shark := Shark{Pos: Vec2{W * 0.5, H * 0.5}}
+	// shark + patrol center
+	t := 0.0
+	patrolC := center
+	shark := Shark{Pos: sharkTargetPosAt(t, patrolC, SharkRXBase*W, SharkRYBase*H)}
 
-	// UI setup (PNG files live next to index.html)
+	// UI bootstrap
 	AddPanel(PanelID, 1, 0, 0, 0, 0, 0, 0, 0)
 	ShowPanel(PanelID)
-	AddControlPictureFromFile(PanelID, SharkCID, int(shark.Pos.X), int(shark.Pos.Y), "shark.png", 1)
-	for i := 0; i < NumFish; i++ {
-		AddControlPictureFromFile(PanelID, BaseFishCID+i, int(fish[i].Pos.X), int(fish[i].Pos.Y), "fish.png", 1)
-		for j := 0; j < TailLength; j++ {
-			AddControlPictureFromFile(PanelID, BaseTailCID+i*TailLength+j, int(fish[i].Tail[j].X), int(fish[i].Tail[j].Y), "tail.png", 1)
+	AddControlPictureFromFile(PanelID, SharkCID, ii(shark.Pos.X), ii(shark.Pos.Y), SharkSprite, 1)
+	for i := 0; i < N; i++ {
+		AddControlPictureFromFile(PanelID, BaseBoidCID+i, ii(boids[i].Pos.X), ii(boids[i].Pos.Y), SpritePath, 1)
+		for k := 0; k < TailLen; k++ {
+			AddControlPictureFromFile(PanelID, BaseTailCID+i*TailLen+k, ii(boids[i].Tail[k].X), ii(boids[i].Tail[k].Y), TailPath, 1)
 		}
 	}
 
 	frame := 0
+	score := 0
+	eatCD := 0.0
+
 	for {
-		// --- SIM ---
-		center := SchoolCenter(fish)
+		t += dt
 
-		// calmer shark patrol (kappa↑, sigma↓, gentle pulls)
-		UpdateSharkOU(&shark, dt, 0.9, 25.0, 0.22, 0.08, vSharkMax, Vec2{W * 0.5, H * 0.5}, center)
-		shark.Pos = Wrap(shark.Pos, W, H)
+		/* ---- live sliders ---- */
+		WsepLive := getSlider("sepW", WsepBase)
+		WaliLive := getSlider("aliW", WaliBase)
+		WcohLive := getSlider("cohW", WcohBase)
+		RsepLive := getSlider("rsep", RsepBase)
 
-		for i := range fish {
-			// schooling first
-			sep := SeparationForce(i, fish, Rsep, MaxNeighbors).Mul(wSep)
-			aln := AlignmentForce(i, fish, Rn, MaxNeighbors).Mul(wAlign)
-			coh := CohesionForce(i, fish, Rn, MaxNeighbors).Mul(wCoh)
-			tan := TangentialSwirlForce(i, fish, Rn, MaxNeighbors, SwirlClockwise).Mul(wTan)
-
-			// baseline swirl + soft wall
-			spin := GlobalSwirlForce(fish[i].Pos, center, SwirlClockwise).Mul(wSpin)
-			wall := BorderForce(fish[i].Pos, W, H, 24.0).Mul(wWall)
-
-			// gentle flee (close + curved)
-			flee := FleeForce(i, fish, shark.Pos, Rthreat, fleeMax, fleeExp)
-
-			acc := sep.Add(aln).Add(coh).Add(tan).Add(spin).Add(wall).Add(flee).Sub(fish[i].Vel.Mul(drag))
-
-			// integrate
-			fish[i].Vel = fish[i].Vel.Add(acc.Mul(dt)).Limit(vFishMax)
-
-			// speed floor: nudge forward if too slow so they never stall
-			speed := fish[i].Vel.Len()
-			if speed < vFishMin {
-				dir := fish[i].Vel
-				if dir.Len2() == 0 {
-					// random tiny nudge if exactly zero
-					dir = Vec2{rand.Float64()*2 - 1, rand.Float64()*2 - 1}.Normalize()
-				} else {
-					dir = dir.SafeNormalize()
-				}
-				fish[i].Vel = dir.Mul(vFishMin + vBoost*rand.Float64()*0.5)
-			}
-
-			fish[i].Pos = Wrap(fish[i].Pos.Add(fish[i].Vel.Mul(dt)), W, H)
-
-			// tail ring push
-			fish[i].TailHead = (fish[i].TailHead + 1) % TailLength
-			fish[i].Tail[fish[i].TailHead] = fish[i].Pos
+		SharkTargetVLive := getSlider("shv", SharkTargetV)
+		patScale := getSlider("pat", SharkRXBase)
+		SharkRXLive := patScale * W
+		SharkRYLive := (SharkRYBase / SharkRXBase) * patScale * H
+		SharkCenterBiasLive := getSlider("bias", SharkCenterBiasBase)
+		SharkSeekGroupLive := getSlider("seek", SharkSeekGroupBase)
+		tailDraw := int(getSlider("tail", float64(TailLen)))
+		if tailDraw < 0 {
+			tailDraw = 0
+		}
+		if tailDraw > TailLen {
+			tailDraw = TailLen
 		}
 
-		// --- RENDER (batched XY) ---
-		SetControlXY(PanelID, SharkCID, int(shark.Pos.X), int(shark.Pos.Y))
-		for i := 0; i < NumFish; i++ {
-			SetControlXY(PanelID, BaseFishCID+i, int(fish[i].Pos.X), int(fish[i].Pos.Y))
-			// update tail markers every other frame
-			if frame%2 == 0 {
-				for j := 0; j < TailLength; j++ {
-					idx := (fish[i].TailHead - j + TailLength) % TailLength
-					p := fish[i].Tail[idx]
-					id := BaseTailCID + i*TailLength + j
-					SetControlXY(PanelID, id, int(p.X), int(p.Y))
+		evil := getCheckbox("evil")
+		if eatCD > 0 {
+			eatCD -= dt
+			if eatCD < 0 {
+				eatCD = 0
+			}
+		}
+
+		/* ---- centroid (alive only) + patrol center smoothing ---- */
+		sum := Vec2{}
+		alive := 0
+		for i := range boids {
+			if boids[i].Dead {
+				continue
+			}
+			sum = sum.Add(boids[i].Pos)
+			alive++
+		}
+		gc := center
+		if alive > 0 {
+			gc = sum.Mul(1.0 / float64(alive))
+		}
+
+		desiredC := center.Add(gc.Sub(center).Mul(SharkCenterBiasLive))
+		alpha := 1 - math.Exp(-dt/SharkCenterTauSec)
+		patrolC = patrolC.Add(desiredC.Sub(patrolC).Mul(alpha))
+
+		/* ---- shark: PD pursuit (normal) OR evil intercept ---- */
+		var wantVel Vec2
+		if !evil {
+			ω := 2 * math.Pi / SharkPeriod
+			stPos := Vec2{patrolC.X + SharkRXLive*math.Cos(ω*t), patrolC.Y + SharkRYLive*math.Sin(ω*t)}
+			stVel := Vec2{-SharkRXLive * ω * math.Sin(ω*t), SharkRYLive * ω * math.Cos(ω*t)}
+			seek := gc.Sub(shark.Pos).Mul(SharkSeekGroupLive)
+			wantVel = stVel.Add(stPos.Sub(shark.Pos).Mul(SharkKp)).Sub(shark.Vel.Sub(stVel).Mul(SharkKd)).Add(seek)
+		} else {
+			if idx, ok := pickTarget(shark, boids); ok {
+				wantVel = evilPursuit(shark, boids[idx], SharkTargetVLive)
+			} else {
+				ω := 2 * math.Pi / SharkPeriod
+				stPos := Vec2{patrolC.X + SharkRXLive*math.Cos(ω*t), patrolC.Y + SharkRYLive*math.Sin(ω*t)}
+				stVel := Vec2{-SharkRXLive * ω * math.Sin(ω*t), SharkRYLive * ω * math.Cos(ω*t)}
+				wantVel = stVel.Add(stPos.Sub(shark.Pos).Mul(SharkKp)).Sub(shark.Vel.Sub(stVel).Mul(SharkKd))
+			}
+		}
+		snext := steerTowards(shark.Vel, wantVel, SharkMaxTurn, SharkMaxForce, SharkTargetVLive)
+		shark.Vel = snext
+		shark.Pos = clampPos(shark.Pos.Add(shark.Vel.Mul(dt)))
+
+		// evil eating with cooldown — mark Dead (no slice reindex)
+		if evil && eatCD == 0 {
+			if n := chompMark(&shark, boids); n > 0 {
+				score += n
+				eatCD = EatCooldownSec
+				js.Global().Call("setScore", score)
+			}
+		}
+
+		/* ---- boids update (alive only) ---- */
+		for i := range boids {
+			if boids[i].Dead {
+				continue
+			}
+
+			sepDir := ruleSeparationR(i, boids, RsepLive).Mul(WsepLive)
+			aliDir := ruleAlignment(i, boids).Mul(WaliLive)
+			cohDir := ruleCohesion(i, boids).Mul(WcohLive)
+
+			toC := center.Sub(boids[i].Pos).Norm().Mul(CenterPull)
+			avoidDelta := confineDelta(boids[i].Pos, boids[i].Vel)
+			homeDelta := homeVel(boids[i].Pos).Sub(boids[i].Vel).Mul(0.5)
+			flee := fleeVel(boids[i].Pos, shark.Pos)
+			fleeDelta := flee.Sub(boids[i].Vel).Mul(0.7)
+
+			want := sepDir.Add(aliDir).Add(cohDir).Add(toC).Add(avoidDelta).Add(homeDelta).Add(fleeDelta)
+			want = want.Add(Vec2{rand.NormFloat64(), rand.NormFloat64()}.Mul(Jitter))
+			want = want.Sub(boids[i].Vel.Mul(Drag))
+
+			next := steerTowards(boids[i].Vel, boids[i].Vel.Add(want), MaxTurn, MaxForce, TargetSpd)
+			if s := next.Len(); s > Vmax {
+				next = next.Mul(Vmax / s)
+			} else if s < Vmin {
+				if s == 0 {
+					next = Vec2{1, 0}.Mul(Vmin)
+				} else {
+					next = next.Mul(Vmin / s)
 				}
+			}
+			boids[i].Vel = next
+			boids[i].Pos = clampPos(boids[i].Pos.Add(boids[i].Vel.Mul(dt)))
+
+			boids[i].Head = (boids[i].Head + 1) % TailLen
+			boids[i].Tail[boids[i].Head] = boids[i].Pos
+		}
+
+		/* ---- render: CLEAR EVERYTHING, then draw alive ---- */
+		clearAllSprites() // <- guarantees no ghosts
+
+		// shark
+		SetControlXY(PanelID, SharkCID, ii(shark.Pos.X), ii(shark.Pos.Y))
+
+		// alive boids
+		for i := 0; i < len(boids); i++ {
+			if boids[i].Dead {
+				continue
+			}
+			// fish
+			SetControlXY(PanelID, BaseBoidCID+i, ii(boids[i].Pos.X), ii(boids[i].Pos.Y))
+			// tails: draw first tailDraw segments (others remain cleared)
+			for k := 0; k < tailDraw; k++ {
+				idx := (boids[i].Head - k + TailLen) % TailLen
+				p := boids[i].Tail[idx]
+				SetControlXY(PanelID, BaseTailCID+i*TailLen+k, ii(p.X), ii(p.Y))
 			}
 		}
 
 		frame++
-		WaitMS(16) // ~60 fps
+		WaitMS(16)
 	}
 }

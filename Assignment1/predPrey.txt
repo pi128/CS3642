@@ -17,3 +17,6 @@ possibly objects like reef on the edges
 Separation, Allignment, Cohesion all taken from the Complexity_International paper, I added the tangential spiral so because I though it would look cool. The shark moves using the Ornstein–Uhlenbeck process it sounded really cool and also got the affect I wanted of a meandering but also slight attraction to the school.
 
 
+https://www.youtube.com/watch?v=bqtqltqcQhw&ab_channel=SebastianLague
+
+Super useful didnt even know boids reworking from his github
