@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-/* ========== tiny vec ========== */
+// tiny vectors
 
 type Vec2 struct{ X, Y float64 }
 
@@ -33,7 +33,7 @@ func (a Vec2) Norm() Vec2 {
 }
 func (a Vec2) Dot(b Vec2) float64 { return a.X*b.X + a.Y*b.Y }
 
-/* ========== sim types ========== */
+// sim types
 
 type Boid struct {
 	Pos, Vel Vec2
@@ -43,7 +43,7 @@ type Boid struct {
 }
 type Shark struct{ Pos, Vel Vec2 }
 
-/* ========== constants (base defaults) ========== */
+// constants
 
 const (
 	// world / timing
@@ -114,7 +114,7 @@ const (
 	SweepBias      = 0.35
 	ConeCos        = 0.5
 
-	// UI IDs / assets (host-provided render glue)
+	// UI IDs  assets lazily but in the site
 	PanelID     = 0
 	BaseBoidCID = 1000
 	BaseTailCID = 5000
@@ -124,7 +124,7 @@ const (
 	SharkSprite = "shark.png"
 )
 
-/* ========== helpers ========== */
+// helpers
 
 func clampPos(p Vec2) Vec2 {
 	if p.X < 1 {
@@ -147,7 +147,7 @@ func rotate(v Vec2, ang float64) Vec2 {
 	return Vec2{v.X*c - v.Y*s, v.X*s + v.Y*c}
 }
 
-/* ========== slider & checkbox readers ========== */
+// slider & checkbox readers
 
 func getSlider(id string, def float64) float64 {
 	el := js.Global().Get("document").Call("getElementById", id)
@@ -168,7 +168,7 @@ func getCheckbox(id string) bool {
 	return el.Get("checked").Bool()
 }
 
-/* ========== falloffs & FOV ========== */
+// falloffs & FOV
 
 func quadKernel(d, R float64) float64 {
 	if d <= 0 {
@@ -190,7 +190,7 @@ func inFOV(selfPos, selfVel, otherPos Vec2) bool {
 	return dir.Dot(toN) >= FOVcos
 }
 
-/* ========== core boids (skip Dead; Rsep passed in) ========== */
+// core boids
 
 func ruleSeparationR(i int, b []Boid, Rsep float64) Vec2 {
 	if b[i].Dead {
@@ -268,7 +268,7 @@ func ruleCohesion(i int, b []Boid) Vec2 {
 	return center.Sub(self.Pos).Norm()
 }
 
-/* ========== home field & walls ========== */
+// home fiels and walls
 
 func homeVel(pos Vec2) Vec2 {
 	c := Vec2{W * 0.5, H * 0.5}
@@ -291,6 +291,7 @@ func homeVel(pos Vec2) Vec2 {
 	k := HomePushMax * math.Pow(t, HomeExp)
 	return d.Mul(k / r)
 }
+
 func blendedWallNormal(p Vec2) Vec2 {
 	dL := p.X
 	dR := W - p.X
@@ -303,6 +304,7 @@ func blendedWallNormal(p Vec2) Vec2 {
 	n := Vec2{1, 0}.Mul(wL).Add(Vec2{-1, 0}.Mul(wR)).Add(Vec2{0, 1}.Mul(wT)).Add(Vec2{0, -1}.Mul(wB))
 	return n.Norm()
 }
+
 func confineDelta(pos, vel Vec2) Vec2 {
 	look := pos.Add(vel.Mul(WallTau))
 	dx := math.Min(look.X, W-look.X)
@@ -333,7 +335,7 @@ func confineDelta(pos, vel Vec2) Vec2 {
 	return target.Sub(vel)
 }
 
-/* ========== steering (turn-rate limited) ========== */
+//steering (turn-rate limited)
 
 func steerTowards(curVel, desired Vec2, maxTurn, maxForce, targetSpd float64) Vec2 {
 	if desired.Len2() == 0 {
@@ -377,7 +379,7 @@ func steerTowards(curVel, desired Vec2, maxTurn, maxForce, targetSpd float64) Ve
 	return newVel.Add(steer)
 }
 
-/* ========== shark helpers, flee, evil mode ========== */
+// shark helpers, flee, evil mode
 
 func sharkTargetPosAt(t float64, C Vec2, rx, ry float64) Vec2 {
 	ω := 2 * math.Pi / SharkPeriod
@@ -440,9 +442,8 @@ func evilPursuit(shark Shark, target Boid, targetSpeed float64) Vec2 {
 	return aim.Add(sweep).Sub(shark.Pos)
 }
 
-/* ========== sprite helpers ========== */
+// sprite helpers
 
-// pre-clear ALL sprites each frame → no ghosts ever
 func clearAllSprites() {
 	offX, offY := Offscreen, Offscreen
 	for i := 0; i < N; i++ {
@@ -468,7 +469,7 @@ func chompMark(shark *Shark, boids []Boid) int {
 	return 0
 }
 
-/* ========== main ========== */
+// main
 
 func main() {
 	rand.Seed(time.Now().UnixNano())
@@ -508,7 +509,7 @@ func main() {
 	for {
 		t += dt
 
-		/* ---- live sliders ---- */
+		// live sliders
 		WsepLive := getSlider("sepW", WsepBase)
 		WaliLive := getSlider("aliW", WaliBase)
 		WcohLive := getSlider("cohW", WcohBase)
@@ -536,7 +537,7 @@ func main() {
 			}
 		}
 
-		/* ---- centroid (alive only) + patrol center smoothing ---- */
+		// centroid + patrol center smoothing
 		sum := Vec2{}
 		alive := 0
 		for i := range boids {
@@ -555,7 +556,7 @@ func main() {
 		alpha := 1 - math.Exp(-dt/SharkCenterTauSec)
 		patrolC = patrolC.Add(desiredC.Sub(patrolC).Mul(alpha))
 
-		/* ---- shark: PD pursuit (normal) OR evil intercept ---- */
+		// shark: PD pursuit (normal)
 		var wantVel Vec2
 		if !evil {
 			ω := 2 * math.Pi / SharkPeriod
@@ -586,7 +587,7 @@ func main() {
 			}
 		}
 
-		/* ---- boids update (alive only) ---- */
+		// boids update
 		for i := range boids {
 			if boids[i].Dead {
 				continue
@@ -623,8 +624,8 @@ func main() {
 			boids[i].Tail[boids[i].Head] = boids[i].Pos
 		}
 
-		/* ---- render: CLEAR EVERYTHING, then draw alive ---- */
-		clearAllSprites() // <- guarantees no ghosts
+		//render: CLEAR EVERYTHING
+		clearAllSprites()
 
 		// shark
 		SetControlXY(PanelID, SharkCID, ii(shark.Pos.X), ii(shark.Pos.Y))
