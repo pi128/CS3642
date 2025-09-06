@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Boids + Shark (WASM)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { --panel:#0f1720cc; --stroke:#263244; --bg:#0f1720; --fg:#e5e7eb; }
+    html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font:14px/1.3 system-ui}
+    .wrap{display:flex;justify-content:center;align-items:center;height:100%}
+    canvas{width:480px;height:320px;image-rendering:pixelated;outline:1px solid #2a3441;border-radius:4px}
+    .ui{position:fixed;left:12px;top:12px;background:var(--panel);
+        border:1px solid var(--stroke);border-radius:8px;padding:10px 12px;backdrop-filter:blur(3px)}
+    .ui h2{margin:4px 0 6px 0;font-size:12px;letter-spacing:.06em;text-transform:uppercase;opacity:.8}
+    .ui label{display:flex;gap:8px;align-items:center;margin:6px 0}
+    .ui input[type=range]{width:180px}
+    .ui .value{min-width:48px;text-align:right;opacity:.8}
+    .ui hr{border:none;border-top:1px solid var(--stroke);margin:8px 0}
+
+    /* Evil-mode background FX */
+    body.evil {
+      background: radial-gradient(180px 140px at 50% 55%, rgba(220,38,38,0.35), transparent 60%), #0b0f16;
+      animation: evilPulse 1.2s ease-in-out infinite;
+    }
+    @keyframes evilPulse {
+      0%,100% { background-color:#0b0f16; }
+      50%     { background-color:#120a0a; }
+    }
+    body.evil .ui { box-shadow:0 0 12px rgba(220,38,38,0.35); border-color:#5f1d1d; }
+    body.evil canvas { outline-color:#5f1d1d; box-shadow: inset 0 0 20px rgba(220,38,38,0.25); }
+
+    /* Toggle switch styling */
+    .switch {
+      position: relative; display: inline-block;
+      width: 46px; height: 24px;
+    }
+    .switch input { display:none; }
+    .slider {
+      position: absolute; cursor:pointer;
+      top:0; left:0; right:0; bottom:0;
+      background-color:#444; transition:.4s; border-radius:24px;
+    }
+    .slider:before {
+      position:absolute; content:"";
+      height:18px; width:18px; left:3px; bottom:3px;
+      background-color:#ccc; transition:.4s; border-radius:50%;
+    }
+    input:checked + .slider { background-color:#c62828; }
+    input:checked + .slider:before { transform: translateX(22px); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <canvas id="c" width="480" height="320"></canvas>
+  </div>
+
+  <div class="ui" role="region" aria-label="Controls">
+    <h2>Boids</h2>
+    <!-- sepW in Go -->
+    <label>Separation
+      <input id="sepW" type="range" min="0" max="3" step="0.05" value="1.60" />
+      <span id="sepWv" class="value"></span>
+    </label>
+    <!-- aliW in Go -->
+    <label>Alignment
+      <input id="aliW" type="range" min="0" max="3" step="0.05" value="1.75" />
+      <span id="aliWv" class="value"></span>
+    </label>
+    <!-- cohW in Go -->
+    <label>Cohesion
+      <input id="cohW" type="range" min="0" max="3" step="0.05" value="0.45" />
+      <span id="cohWv" class="value"></span>
+    </label>
+    <!-- rsep in Go -->
+    <label>Separation Radius
+      <input id="rsep" type="range" min="8" max="40" step="1" value="20" />
+      <span id="rsepv" class="value"></span>
+    </label>
+
+    <hr />
+    <h2>Shark</h2>
+    <!-- shv in Go -->
+    <label>Speed
+      <input id="shv" type="range" min="60" max="260" step="5" value="150" />
+      <span id="shvv" class="value"></span>
+    </label>
+    <!-- pat in Go -->
+    <label>Path Scale
+      <input id="pat" type="range" min="0.15" max="0.60" step="0.01" value="0.28" />
+      <span id="patv" class="value"></span>
+    </label>
+    <!-- bias in Go -->
+    <label>Center Bias
+      <input id="bias" type="range" min="0" max="1" step="0.02" value="0.65" />
+      <span id="biasv" class="value"></span>
+    </label>
+    <!-- seek in Go -->
+    <label>Seek Group
+      <input id="seek" type="range" min="0" max="1" step="0.02" value="0.35" />
+      <span id="seekv" class="value"></span>
+    </label>
+
+    <!-- evil in Go -->
+    <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+      <label class="switch">
+        <input id="evil" type="checkbox" />
+        <span class="slider"></span>
+      </label>
+      <span>Evil Mode</span>
+    </div>
+    <div style="margin-top:6px">Eaten: <span id="score">0</span></div>
+
+    <hr />
+    <!-- tail in Go -->
+    <h2>Trail</h2>
+    <label>Tail Length (draw)
+      <input id="tail" type="range" min="0" max="10" step="1" value="6" />
+      <span id="tailv" class="value"></span>
+    </label>
+  </div>
+
+  <script src="wasm_exec.js"></script>
+  <script>
+    const ids = ["sepW","aliW","cohW","rsep","shv","pat","bias","seek","tail"];
+    function upd(){
+      ids.forEach(id=>{
+        const el=document.getElementById(id);
+        const v=document.getElementById(id+"v");
+        if(el && v) v.textContent=el.value;
+      });
+      // evil-mode background toggle
+      const e=document.getElementById("evil");
+      document.body.classList.toggle("evil", e && e.checked);
+    }
+    ids.forEach(id=>{
+      const el=document.getElementById(id);
+      if(el) el.addEventListener("input", upd);
+    });
+    document.getElementById("evil").addEventListener("change", upd);
+    upd();
+
+    // Go will call this to update score
+    window.setScore = v => (document.getElementById("score").textContent = v);
+
+    // boot wasm
+    const go = new Go();
+    (async () => {
+      const r = await fetch("main.wasm");
+      const b = await r.arrayBuffer();
+      const {instance} = await WebAssembly.instantiate(b, go.importObject);
+      go.run(instance);
+    })();
+  </script>
+</body>
+</html>
