@@ -142,6 +142,7 @@ func clampPos(p Vec2) Vec2 {
 	return p
 }
 func ii(x float64) int { return int(math.Round(x)) }
+
 func rotate(v Vec2, ang float64) Vec2 {
 	c, s := math.Cos(ang), math.Sin(ang)
 	return Vec2{v.X*c - v.Y*s, v.X*s + v.Y*c}
@@ -473,6 +474,7 @@ func chompMark(shark *Shark, boids []Boid) int {
 
 func main() {
 	rand.Seed(time.Now().UnixNano())
+	// can i just delete it?
 
 	center := Vec2{W * 0.5, H * 0.5}
 	boids := make([]Boid, N)

@@ -31,7 +31,7 @@ func wili_setControlValue(panel, controlID, value int32)
 //go:wasmimport fwwasm waitms
 func wili_waitms(ms int32)
 
-// --------- Thin Go wrappers you call from main.go ---------
+// Thin Go wrappers you call from predPrey.go 
 func AddPanel(panel, visible, inRotation, useTile, tileID, bgR, bgG, bgB, showMenu int) {
 	wili_addPanel(int32(panel), int32(visible), int32(inRotation), int32(useTile), int32(tileID), int32(bgR), int32(bgG), int32(bgB), int32(showMenu))
 }
