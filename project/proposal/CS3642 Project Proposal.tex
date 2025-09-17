@@ -1,0 +1,98 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{titlesec}
+
+\titleformat{\section}{\large\bfseries}{}{}{}
+\titleformat{\subsection}{\normalsize\bfseries}{}{}{}
+
+\title{CS3642 Project Proposal\\[4pt]
+\large From Audio to Frets: AI-Driven Guitar Transcription and Robotic Replay}
+\author{James Widner \quad \texttt{001121770}}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section*{Summary (Executive Overview)}
+This project aims to create an \textbf{AI system that listens to guitar audio and produces playable notes, chords, and tablature}. The core phase focuses on automatic transcription from clean recordings, mapping sounds to musical notes and chords. A stretch goal is to handle ``messy'' audio---full songs with multiple instruments---by first separating the guitar track. A long-term extension is to \textbf{connect the AI transcription output to a robotic guitar system} with servo motors that can physically press frets and strum strings, enabling the machine to \emph{hear and replay} performances in the real world.
+
+\section*{Introduction / Motivation}
+Learning songs by ear is rewarding but time-consuming, especially with complex voicings, distortion, and expressive guitar techniques. Automatic Music Transcription (AMT) seeks to automate this process, but guitar presents unique challenges due to polyphony, overlapping harmonics, and non-linear playing styles.
+
+The goal of this project is to build a transcription assistant that can reliably detect chords and notes from guitar recordings and map them to tablature. Unlike preprogrammed robotic guitars that simply follow preloaded scores, this system is designed to \textbf{listen to arbitrary audio, transcribe it, and then replay it}---first virtually, and ultimately on a physical guitar controlled by servo motors. This vision combines machine learning, signal processing, and robotics, with applications in education, accessibility, and performance automation.
+
+\section*{Literature Review (Preliminary Reading)}
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \textbf{Pitch Estimation:} CREPE (CNN pitch tracker), YIN/pyin algorithms.
+  \item \textbf{Onset Detection:} Spectral flux; Onsets and Frames (Hawthorne et al.).
+  \item \textbf{Chord Recognition:} Chroma-based methods; deep learning on CQT spectrograms; HMM/Viterbi smoothing.
+  \item \textbf{Tablature Mapping:} GuitarSet dataset with string/fret annotations.
+  \item \textbf{Source Separation:} Demucs and Spleeter for isolating guitar stems from full mixes.
+  \item \textbf{Robotic Guitar Prototypes:} Servo-based fret pressing and strumming systems demonstrate feasibility of physical replay.
+\end{itemize}
+
+\section*{Proposed Methodology}
+\textbf{System Pipeline:}
+\begin{enumerate}[leftmargin=*,itemsep=3pt]
+  \item \textbf{Preprocessing:} Normalize audio; compute spectrograms (CQT, Mel); extract chroma/CRP features. Apply harmonic--percussive source separation (HPSS).
+  \item \textbf{Guitar Isolation (stretch):} Apply Demucs or Spleeter to extract the guitar stem from multi-instrument songs.
+  \item \textbf{Onset \& Pitch Tracking:} Detect note onsets; estimate pitch with CREPE or pyin. Smooth results for monophonic solos.
+  \item \textbf{Chord Recognition:} 
+    \begin{itemize}[itemsep=1pt]
+      \item Baseline: Template matching on chroma features.
+      \item AI: CNN/GRU classifier trained on spectrogram patches for chord classes (maj/min/7th).
+      \item Postprocessing: Temporal smoothing (HMM/Viterbi).
+    \end{itemize}
+  \item \textbf{Tab Mapping:} Convert pitches to string/fret positions using GuitarSet constraints; optimize for playability (minimize shifts).
+  \item \textbf{Replay:} Export transcription as MIDI or tab. 
+    \begin{itemize}
+      \item Short-term: Virtual playback using guitar soundfonts.
+      \item Long-term: Servo-driven robot guitar that executes fret presses and strums.
+    \end{itemize}
+\end{enumerate}
+
+\noindent \textit{(Figure placeholder: Pipeline diagram showing Audio $\rightarrow$ Features $\rightarrow$ Transcription $\rightarrow$ Tabs/MIDI $\rightarrow$ Robotic Guitar).}
+
+\section*{Data Sources}
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \textbf{GuitarSet:} Annotated frets, strings, and F0s for supervised learning.
+  \item \textbf{IDMT-SMT-Guitar:} Isolated notes and techniques.
+  \item \textbf{NSynth (Guitar subset):} For pitch modeling.
+  \item \textbf{MedleyDB, MUSDB18:} Multitrack recordings for separation experiments.
+  \item \textbf{Personal recordings:} For demonstration and testing.
+\end{itemize}
+
+\section*{Evaluation Plan}
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \textbf{Chord Accuracy:} Chord Symbol Recall (CSR), frame-level accuracy.
+  \item \textbf{Note Accuracy:} Precision, recall, F1; onset accuracy; pitch error (in cents).
+  \item \textbf{Tab Mapping:} String/fret correctness; playability analysis.
+  \item \textbf{Replay Quality:} Informal MOS (listening test); alignment with original.
+\end{itemize}
+
+\section*{Expected Outcomes}
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \textbf{MVP:} Chord recognition and MIDI/tab replay from clean guitar audio.
+  \item \textbf{Stretch:} Robust note/chord transcription in messy audio via separation.
+  \item \textbf{Long-term:} Physical replay on a robotic guitar.
+\end{itemize}
+
+\section*{References (starter set; will expand for final report)}
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+  \item McFee et al., ``librosa: Audio and Music Signal Analysis in Python.''
+  \item Kim et al., ``CREPE: A Convolutional Representation for Pitch Estimation.''
+  \item Hawthorne et al., ``Onsets and Frames: Dual-Objective Piano Transcription.''
+  \item Schreiber \& Müller, ``A Single-Step Approach to Chord Transcription.''
+  \item Xi et al., ``GuitarSet: A Dataset for Guitar Transcription.''
+  \item Défossez et al., ``Demucs: Music Source Separation with CNNs.''
+  \item Stoller et al., ``Spleeter: A Fast and State-of-the-Art Music Source Separation Tool.''
+  \item Humphrey \& Bello, ``From Chroma to Chords: Robust Chord Recognition.''
+  \item van den Oord et al., ``WaveNet: A Generative Model for Raw Audio.''
+  \item Paszke et al., ``PyTorch: An Imperative Style, High-Performance Deep Learning Library.''
+\end{enumerate}
+
+\end{document}

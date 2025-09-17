@@ -1,0 +1,175 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{forest}
+\usepackage{enumitem}
+\setlist[enumerate]{itemsep=4pt, topsep=6pt}
+\setlist[itemize]{itemsep=4pt, topsep=6pt}
+\begin{document}
+
+\begin{center}
+{\Large \textbf{CS4308 --- Concepts of Programming Languages}}\\[4pt]
+\textbf{Assignment \#2 (Module 2): Solutions}\\[2pt]
+\end{center}
+
+\section*{Given grammar}
+\begin{align*}
+\langle assign\rangle &\to \langle id\rangle\;=\;\langle expr\rangle\\
+\langle id\rangle &\to A \mid B \mid C\\
+\langle expr\rangle &\to \langle id\rangle + \langle expr\rangle \;\mid\; \langle id\rangle * \langle expr\rangle \;\mid\; (\langle expr\rangle) \;\mid\; \langle id\rangle
+\end{align*}
+
+\section*{1.\ Parse trees and leftmost derivations}
+\subsection*{(a) \; $A = A * (B + (C * A))$}
+
+\paragraph{Leftmost derivation}
+\begin{align*}
+\langle assign\rangle
+&\Rightarrow \langle id\rangle = \langle expr\rangle\\
+&\Rightarrow A = \langle expr\rangle\\
+&\Rightarrow A = \langle id\rangle * \langle expr\rangle\\
+&\Rightarrow A = A * \langle expr\rangle\\
+&\Rightarrow A = A * (\langle expr\rangle)\\
+&\Rightarrow A = A * (\langle id\rangle + \langle expr\rangle)\\
+&\Rightarrow A = A * (B + \langle expr\rangle)\\
+&\Rightarrow A = A * (B + (\langle expr\rangle))\\
+&\Rightarrow A = A * (B + (\langle id\rangle * \langle expr\rangle))\\
+&\Rightarrow A = A * (B + (C * \langle expr\rangle))\\
+&\Rightarrow A = A * (B + (C * \langle id\rangle))\\
+&\Rightarrow A = A * (B + (C * A))
+\end{align*}
+
+\paragraph{Parse tree}
+\begin{center}
+\begin{forest}
+for tree={
+  s sep=6mm,
+  l sep=6mm,
+  anchor=center
+}
+[$\langle assign\rangle$
+  [$\langle id\rangle$ [A]]
+  [=]
+  [$\langle expr\rangle$
+    [$\langle id\rangle$ [A]]
+    [*]
+    [$\langle expr\rangle$
+      [(]
+      [$\langle expr\rangle$
+        [$\langle id\rangle$ [B]]
+        [+]
+        [$\langle expr\rangle$
+          [(]
+          [$\langle expr\rangle$
+            [$\langle id\rangle$ [C]]
+            [*]
+            [$\langle expr\rangle$ [$\langle id\rangle$ [A]]]
+          ]
+          [)]
+        ]
+      ]
+      [)]
+    ]
+  ]
+]
+\end{forest}
+\end{center}
+
+\subsection*{(b) \; $B = C * (A * C + B)$}
+
+\paragraph{Leftmost derivation}
+\begin{align*}
+\langle assign\rangle
+&\Rightarrow \langle id\rangle = \langle expr\rangle\\
+&\Rightarrow B = \langle expr\rangle\\
+&\Rightarrow B = \langle id\rangle * \langle expr\rangle\\
+&\Rightarrow B = C * \langle expr\rangle\\
+&\Rightarrow B = C * (\langle expr\rangle)\\
+&\Rightarrow B = C * (\langle id\rangle * \langle expr\rangle)\\
+&\Rightarrow B = C * (A * \langle expr\rangle)\\
+&\Rightarrow B = C * (A * (\langle id\rangle + \langle expr\rangle))\\
+&\Rightarrow B = C * (A * (C + \langle expr\rangle))\\
+&\Rightarrow B = C * (A * (C + \langle id\rangle))\\
+&\Rightarrow B = C * (A * (C + B))
+\end{align*}
+
+\paragraph{Parse tree}
+\begin{center}
+\begin{forest}
+for tree={
+  s sep=6mm,
+  l sep=6mm,
+  anchor=center
+}
+[$\langle assign\rangle$
+  [$\langle id\rangle$ [B]]
+  [=]
+  [$\langle expr\rangle$
+    [$\langle id\rangle$ [C]]
+    [*]
+    [$\langle expr\rangle$
+      [(]
+      [$\langle expr\rangle$
+        [$\langle id\rangle$ [A]]
+        [*]
+        [$\langle expr\rangle$
+          [$\langle id\rangle$ [C]]
+          [+]
+          [$\langle expr\rangle$ [$\langle id\rangle$ [B]]]
+        ]
+      ]
+      [)]
+    ]
+  ]
+]
+\end{forest}
+\end{center}
+
+\section*{2.\ Convert to BNF}
+Given EBNF:
+\begin{align*}
+\langle S\rangle &\to \langle A\rangle \;\{\, b\, \langle A\rangle \,\}\\
+\langle A\rangle &\to a\,[b]\,\langle A\rangle
+\end{align*}
+A BNF conversion that preserves the optional and repetition constructs is:
+\begin{align*}
+\langle S\rangle &\to \langle A\rangle\,\langle R\rangle\\
+\langle R\rangle &\to b\,\langle A\rangle\,\langle R\rangle \mid \epsilon\\[4pt]
+\langle A\rangle &\to a\,\langle O\rangle\,\langle A\rangle \mid a\,\langle O\rangle\\
+\langle O\rangle &\to b \mid \epsilon
+\end{align*}
+Here, $\langle R\rangle$ expands the ``zero-or-more'' repetition of \texttt{b\textless A\textgreater}, and $\langle O\rangle$ realizes the optional \texttt{[b]}. The second rule for $\langle A\rangle$ provides the terminating (non-recursive) alternative needed in BNF.
+
+\section*{3.\ Grammar for the language $\{\,a^n b^n \mid n>0\,\}$}
+A concise grammar is
+\begin{align*}
+\langle S\rangle \to a\,\langle S\rangle\,b \;\mid\; a b
+\end{align*}
+This generates one or more matching pairs of $a$'s followed by $b$'s.
+
+\section*{4.\ Legality under the grammar}
+Given
+\begin{align*}
+\langle S\rangle &\to \langle A\rangle\; a\; \langle B\rangle\; b\\
+\langle A\rangle &\to \langle A\rangle\, b \mid b \quad (\text{so } \langle A\rangle \Rightarrow b^k,\; k\ge 1)\\
+\langle B\rangle &\to a\,\langle B\rangle \mid a \quad (\text{so } \langle B\rangle \Rightarrow a^m,\; m\ge 1)
+\end{align*}
+Therefore,
+\[
+\langle S\rangle \Rightarrow b^{k}\; a\; a^{m}\; b \;=\; b^{k}\; a^{m+1}\; b
+\quad\text{with } k\ge 1,\; m\ge 1,
+\]
+i.e., strings of the form \emph{one or more $b$'s, then at least two $a$'s, then a single trailing $b$}.
+
+\paragraph{Decisions}
+\begin{itemize}
+  \item (a) \texttt{baab} \;is legal ($k=1,\; m=1$).
+  \item (b) \texttt{bbbab} \;is \emph{not} legal (only one $a$ before the final $b$).
+  \item (c) \texttt{bbaaaaaS} \;is \emph{not} legal (contains the nonterminal \texttt{S} as a literal symbol).
+  \item (d) \texttt{bbaab} \;is legal ($k=2,\; m=1$).
+\end{itemize}
+
+\vfill
+\noindent\textit{Notes.} The parse trees above follow the given right-recursive expression grammar; no operator precedence between $+$ and $*$ is assumed beyond that imposed by parentheses.
+
+\end{document}
