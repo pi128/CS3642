@@ -1,2 +1,4 @@
 Assignment1(PEAS).tex
-Assignment1(PEAS).pdf
+Assignment1(PEAS).pdfcrepe-env/
+__pycache__/
+*.pyc

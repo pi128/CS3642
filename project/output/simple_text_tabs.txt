@@ -1,0 +1,20 @@
+C-G-Am-F-D-Em Progression by AI Transcription Test
+==================================================
+
+Chord Progression: C - G - Am - F - D - Em
+
+Guitar Tablature:
+--------------------------------------------------
+E|--3----0----0--|
+A|--0----0----2--|
+D|--1----0----0--|
+G|--0----2----2--|
+B|--3----2----2--|
+e|--3----0----0--|
+--------------------------------------------------
+
+Analysis:
+- Total Measures: 3
+- Total Notes: 35
+- Chords Detected: 3
+- Tuning: Standard (E A D G B e)
