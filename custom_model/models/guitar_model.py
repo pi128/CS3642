@@ -4,7 +4,6 @@ Hand-rolled model specifically designed for guitar audio analysis.
 """
 
 import numpy as np
-import librosa
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

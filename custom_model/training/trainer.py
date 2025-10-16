@@ -24,8 +24,8 @@ class GuitarDataset(Dataset):
         
     def _load_data(self) -> List[Dict]:
         """Load training data."""
-        # This would load from your training data
-        # For now, return empty list
+        # This is now handled by the GuitarChordDataset class
+        # This method is kept for compatibility but not used
         return []
     
     def __len__(self) -> int:
@@ -58,7 +58,7 @@ class GuitarTrainer:
         
         # Scheduler
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimizer, mode='min', factor=0.5, patience=10, verbose=True
+            self.optimizer, mode='min', factor=0.5, patience=10
         )
         
         # Training history
@@ -110,10 +110,10 @@ class GuitarTrainer:
             # Calculate losses
             chord_loss = self.chord_loss(outputs['chord_logits'], chord_target.argmax(dim=1))
             
-            # Tablature loss (flatten for BCE)
-            tablature_pred = outputs['fret_positions'].view(-1, 6 * 25)
-            tablature_target_flat = tablature_target.view(-1, 6 * 25)
-            tablature_loss = self.tablature_loss(tablature_pred, tablature_target_flat)
+            # Tablature loss (use MSE for fret positions)
+            tablature_pred = outputs['fret_positions']  # Shape: [batch, 6]
+            tablature_target_flat = tablature_target.view(-1, 6, 25).argmax(dim=2).float()  # Convert to fret numbers
+            tablature_loss = nn.MSELoss()(tablature_pred, tablature_target_flat)
             
             # Confidence loss (dummy for now)
             confidence_loss = torch.tensor(0.0, device=self.device)
@@ -142,9 +142,9 @@ class GuitarTrainer:
             chord_accuracy = (chord_pred == chord_target_idx).float().mean().item()
             epoch_accuracies['chord_accuracy'] += chord_accuracy
             
-            # Tablature accuracy (simplified)
-            tablature_pred_binary = (torch.sigmoid(tablature_pred) > 0.5).float()
-            tablature_accuracy = (tablature_pred_binary == tablature_target_flat).float().mean().item()
+            # Tablature accuracy (fret position accuracy)
+            tablature_pred_rounded = torch.round(tablature_pred)
+            tablature_accuracy = (torch.abs(tablature_pred_rounded - tablature_target_flat) < 1.0).float().mean().item()
             epoch_accuracies['tablature_accuracy'] += tablature_accuracy
         
         # Average losses and accuracies
@@ -187,10 +187,10 @@ class GuitarTrainer:
                 # Calculate losses
                 chord_loss = self.chord_loss(outputs['chord_logits'], chord_target.argmax(dim=1))
                 
-                # Tablature loss
-                tablature_pred = outputs['fret_positions'].view(-1, 6 * 25)
-                tablature_target_flat = tablature_target.view(-1, 6 * 25)
-                tablature_loss = self.tablature_loss(tablature_pred, tablature_target_flat)
+                # Tablature loss (use MSE for fret positions)
+                tablature_pred = outputs['fret_positions']  # Shape: [batch, 6]
+                tablature_target_flat = tablature_target.view(-1, 6, 25).argmax(dim=2).float()  # Convert to fret numbers
+                tablature_loss = nn.MSELoss()(tablature_pred, tablature_target_flat)
                 
                 # Confidence loss
                 confidence_loss = torch.tensor(0.0, device=self.device)
@@ -210,9 +210,9 @@ class GuitarTrainer:
                 chord_accuracy = (chord_pred == chord_target_idx).float().mean().item()
                 epoch_accuracies['chord_accuracy'] += chord_accuracy
                 
-                # Tablature accuracy
-                tablature_pred_binary = (torch.sigmoid(tablature_pred) > 0.5).float()
-                tablature_accuracy = (tablature_pred_binary == tablature_target_flat).float().mean().item()
+                # Tablature accuracy (fret position accuracy)
+                tablature_pred_rounded = torch.round(tablature_pred)
+                tablature_accuracy = (torch.abs(tablature_pred_rounded - tablature_target_flat) < 1.0).float().mean().item()
                 epoch_accuracies['tablature_accuracy'] += tablature_accuracy
         
         # Average losses and accuracies

@@ -1,0 +1,27 @@
+# Core dependencies for Guitar Tab GUI
+torch>=1.9.0
+numpy>=1.21.0
+scipy>=1.7.0
+
+# Audio processing (optional - install manually if needed)
+# librosa>=0.9.0
+# soundfile>=0.10.0
+# pyaudio>=0.2.11
+
+# GUI dependencies
+tkinter  # Built into Python
+
+# Configuration
+PyYAML>=6.0
+
+# Visualization
+matplotlib>=3.5.0
+
+# Additional utilities
+pathlib  # Built into Python 3.4+
+dataclasses  # Built into Python 3.7+
+typing  # Built into Python 3.5+
+
+# Optional: CREPE for alternative transcription
+# tensorflow>=2.8.0
+# crepe>=0.0.12
